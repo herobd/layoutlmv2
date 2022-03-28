@@ -255,7 +255,9 @@ class DocVQADataset(torch.utils.data.Dataset):
         data = self.encode_dataset(data)
 
         if data is None:
-            return self.__getitem__((index+1)%len(self))
+            #return self.__getitem__((index+1)%len(self))
+            index = random.randrange(len(self))
+            return self.__getitem__(index)
 
         return data
 

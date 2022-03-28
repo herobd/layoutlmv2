@@ -3,10 +3,10 @@ import numpy as np
 import editdistance
 import sys
 from PIL import Image
-gpu_device = sys.argv[1]
+experiment = sys.argv[1]
 
 model_checkpoint = "../pairing/cache_huggingface/layoutlmv2-base-uncased"
-batch_size = 5
+batch_size = 5 #if experiment == 'load' else 3
 
 """## Analysis
 
@@ -18,7 +18,7 @@ import torch
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-dataset = DocVQADataset('train',load_ocr=gpu_device=='load')
+dataset = DocVQADataset('train',load_ocr=experiment=='load')
 
 #print('TEST NUM WORKERS 0')
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,num_workers=9,collate_fn=collate, shuffle=True)
@@ -72,7 +72,7 @@ def run(image,question):
     if isinstance(image,str):
         image = Image.open(image).convert("RGB")
     # prepare for the model
-    encoding = processor(image, question, return_tensors="pt")
+    encoding = processor(image, question, return_tensors="pt",max_length=512,truncation=True)
     #print(encoding.keys())
 
     """Note that you can also verify what the processor has created, by decoding the `input_ids` back to text:"""
@@ -121,7 +121,7 @@ from transformers import AdamW
 optimizer = AdamW(model.parameters(), lr=5e-5)
 
 try:
-    loading = torch.load('state_latest{}.pth'.format(gpu_device))
+    loading = torch.load('state_latest{}.pth'.format(experiment))
     start_epoch = loading['epoch']
     start_idx = loading['idx']
 
@@ -132,14 +132,24 @@ except FileNotFoundError:
     start_idx=-1
 
 
-#with torch.cuda.device(gpu_device):
-if gpu_device=='load':
+#with torch.cuda.device(experiment):
+if experiment=='load':
     device = "cuda:1" if torch.cuda.is_available() else "cpu"
 else:
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+def optimizer_to(optim, device):
+    for param in optim.state.values():
+        # Not sure there are any global tensors in the state dict
+        if isinstance(param, dict):
+            for name,subparam in param.items():
+                if 'avg' in name and isinstance(subparam, torch.Tensor):
+                    subparam.data = subparam.data.to(device)
+                    if subparam._grad is not None:
+                        subparam._grad.data = subparam._grad.data.to(device)
 
 model.to(device)
-
+optimizer_to(optimizer,device)
 
 def ANLS(pred,answers):
     if answers[0] is not None:
@@ -162,9 +172,9 @@ for epoch in range(start_epoch,200):  # loop over the dataset multiple times
             if idx>=len(dataloader):
                 break
         if idx%500==0 and (idx!=0 or epoch!=0):
-            torch.save({'state_dict':model.state_dict(),'optimizer':optimizer.state_dict(), 'epoch':epoch, 'idx':idx},'state_latest{}.pth'.format(gpu_device))
+            torch.save({'state_dict':model.state_dict(),'optimizer':optimizer.state_dict(), 'epoch':epoch, 'idx':idx},'state_latest{}.pth'.format(experiment))
             print('saved')
-        print('Train {}/{}'.format(idx,len(dataloader)),end='\r')
+        print('Train e:{}, {}/{}'.format(epoch,idx,len(dataloader)),end='\r')
         # get the inputs;
         input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
@@ -200,10 +210,10 @@ for epoch in range(start_epoch,200):  # loop over the dataset multiple times
    print('e {}, ANLS: {}'.format(epoch,final_score))
    if final_score>best_score:
        best_score = final_score
-       torch.save({'state_dict':model.state_dict(), 'epoch':epoch, 'ANLS':final_score},'state_best{}.pth'.format(gpu_device))
+       torch.save({'state_dict':model.state_dict(), 'epoch':epoch, 'ANLS':final_score},'state_best{}.pth'.format(experiment))
        print('saved best')
        no_improve=0
-   elif epoch<3:
+   elif epoch>3:
         for g in optimizer.param_groups:
             g['lr'] *= 0.1
         no_improve+=1
@@ -212,6 +222,6 @@ for epoch in range(start_epoch,200):  # loop over the dataset multiple times
             break
 
    log.append(final_score)
-   with open('log{}.json'.format(gpu_device),'w') as f:
+   with open('log{}.json'.format(experiment),'w') as f:
        json.dump(log,f)
 
