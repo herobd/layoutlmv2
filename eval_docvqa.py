@@ -5,6 +5,9 @@ import sys
 from PIL import Image
 import torch
 
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 
 finetuned_checkpoint = sys.argv[1]
 outfile = sys.argv[2]
@@ -81,7 +84,7 @@ loading = torch.load(finetuned_checkpoint)
 model.load_state_dict(loading['state_dict'])
 
 
-device = "cuda:0" if torch.cuda.is_available() else "cpu"
+device = "cuda:1" if torch.cuda.is_available() else "cpu"
 
 
 model.to(device)

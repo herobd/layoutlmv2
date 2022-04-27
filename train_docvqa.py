@@ -119,6 +119,7 @@ model = AutoModelForQuestionAnswering.from_pretrained(model_checkpoint)
 
 from transformers import AdamW
 optimizer = AdamW(model.parameters(), lr=5e-5)
+#optimizer = AdamW(model.parameters(), lr=5e-6)
 
 try:
     loading = torch.load('state_latest{}.pth'.format(experiment))
@@ -150,6 +151,8 @@ def optimizer_to(optim, device):
 
 model.to(device)
 optimizer_to(optimizer,device)
+
+accum_step =10
 
 def ANLS(pred,answers):
     if answers[0] is not None:
@@ -185,15 +188,18 @@ for epoch in range(start_epoch,200):  # loop over the dataset multiple times
         end_positions = batch["end_positions"].to(device)
 
         # zero the parameter gradients
-        optimizer.zero_grad()
+        if idx%accum_step==1:
+            optimizer.zero_grad()
 
         # forward + backward + optimize
         outputs = model(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids,
                        bbox=bbox, image=image, start_positions=start_positions, end_positions=end_positions)
-        loss = outputs.loss
+        loss = outputs.loss / accum_step
         #print("Loss:", loss.item())
         loss.backward()
-        optimizer.step()
+
+        if idx%accum_step==0:
+            optimizer.step()
 
    start_idx=-1
 
@@ -213,6 +219,10 @@ for epoch in range(start_epoch,200):  # loop over the dataset multiple times
        torch.save({'state_dict':model.state_dict(), 'epoch':epoch, 'ANLS':final_score},'state_best{}.pth'.format(experiment))
        print('saved best')
        no_improve=0
+       if epoch%2==1:
+            for g in optimizer.param_groups:
+               g['lr'] *= 0.1
+            print('drop LR')
    elif epoch>3:
         for g in optimizer.param_groups:
             g['lr'] *= 0.1
